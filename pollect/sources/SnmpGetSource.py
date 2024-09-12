@@ -1,6 +1,7 @@
 import re
 import subprocess
 import time
+import os
 from typing import Dict, List, Optional
 
 from pollect.core.Log import Log
@@ -204,7 +205,24 @@ class SnmpGetSource(Source):
         for metric_def in self.metric_defs:
             self.oids.extend(metric_def.get_oids())
 
-        self.community = config.get('communityString', 'public')
+        # Add SNMP version parameter with a default value
+        self.snmp_version = config.get('snmpVersion', '1')
+
+        # SNMP v3 specific parameters
+        if self.snmp_version == '3':
+            self.username = config.get('username')
+            self.authKeyName = config.get('authKeyName')
+            self.authKey = os.environ.get(self.authKeyName, 'defaultAuth')
+            if not self.authKey:
+                self.log.error(f"Auth key not found in environment for {self.authKeyName}")
+            self.authProtocol = config.get('authProtocol')
+            self.privKeyName = config.get('privKeyName')
+            self.privKey = os.environ.get(self.privKeyName, 'defaultPriv')
+            if not self.privKey:
+                self.log.error(f"Priv key not found in environment for {self.privKeyName}")
+            self.privProtocol = config.get('privProtocol')
+        else:
+            self.community = config.get('communityString', 'public')
 
     def _probe(self) -> List[ValueSet]:
         snmp_values = self._get_values(self.oids)
@@ -229,7 +247,32 @@ class SnmpGetSource(Source):
                 values.update(self._get_values(chunk))
             return values
 
-        args = ['snmpget', '-v1', '-c', self.community, self.host]
+        if self.snmp_version == '3':
+            args = [
+                'snmpget',
+                '-v3',
+                '-l', 'authPriv',  # or another security level
+                '-u', self.username,
+                '-a', self.authProtocol,
+                '-A', self.authKey,
+                '-x', self.privProtocol,
+                '-X', self.privKey,
+                self.host
+            ]
+        elif self.snmp_version == '2c':
+            args = [
+                'snmpget',
+                '-v2c',
+                '-c', self.community,
+                self.host
+            ]
+        else:
+            args = [
+                'snmpget',
+                '-v1',
+                '-c', self.community,
+                self.host
+            ]
         args.extend(oids)
         lines = subprocess.check_output(args).decode('utf-8').splitlines()
 
